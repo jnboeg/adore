@@ -1,0 +1,28 @@
+{
+    "vehicle_id": "a1",
+    "cog_to_front_axle":,
+    "rear_axle_to_cog": ,
+    "wheelbase": 0.19,
+    "front_axle_to_front_border": 0.05,
+    "rear_border_to_rear_axle": 0.033,
+    "mass": 2.23,
+    "friction_coefficient": ,
+    "cog_height": ,
+    "front_tire_stiffness": ,
+    "rear_tire_stiffness": ,
+    "rotational_inertia_div_mass": ,
+    "front_track_width": 0.155,
+    "rear_track_width": 0.155,
+    "body_width": 0.201,
+    "body_height": 0.182,
+    "steering_ratio": ,
+    "steering_angle_max": 0.785398,
+    "steering_angle_min": -0.785398,
+    "acceleration_max": ,
+    "acceleration_min": ,
+    "cornering_stiffness": ,
+    "brake_balance_front": ,
+    "acceleration_balance_front": ,
+    "vehicle_flag":
+  }
+  
