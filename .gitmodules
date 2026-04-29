@@ -18,7 +18,7 @@
 	url = git@github.com:eclipse-adore/adore_trajectory_tracker.git
 [submodule "adore_scenarios/adore_simulation_scenarios"]
 	path = adore_scenarios/simulation_scenarios
-	url = git@github.com:eclipse-adore/adore_simulation_scenarios.git
+	url = git@github.com:jnboeg/adore_simulation_scenarios.git
 [submodule "interfaces/sumo_bridge"]
 	path = ros2_workspace/src/adore_interfaces/sumo_bridge
 	url = git@github.com:eclipse-adore/sumo_if_ros.git
