@@ -30,6 +30,9 @@ ros2_to_zenoh:
     # qos_reliability: reliable     # 'reliable' (default) or 'best_effort'
     # qos_durability: volatile      # 'volatile' (default) or 'transient_local'
     # qos_depth: 1                  # History depth. Defaults to 1.
+  - ros_topic: "/cmd_vel"
+    msg_type: "geometry_msgs/msg/Twist"
+    format: cdr
 
 # Bridge zenoh topics to ROS2 DDS.
 # The publishing end must be running rmw_zenoh_cpp with a matching zenoh_bridge_id.
@@ -46,3 +49,15 @@ zenoh_to_ros2:
     # qos_reliability: best_effort  # 'best_effort' (default) or 'reliable'
     # qos_durability: volatile      # 'volatile' (default) or 'transient_local'
     # qos_depth: 1                  # History depth. Defaults to 1.
+  - ros_topic: "/voltage"
+    msg_type: "std_msgs/msg/Float32"
+    format: cdr
+  - ros_topic: "/vel_raw"
+    msg_type: "geometry_msgs/msg/Twist"
+    format: cdr
+  - ros_topic: "/imu/data_raw"
+    msg_type: "sensor_msgs/msg/Imu"
+    format: cdr
+  - ros_topic: "/cmd_vel"
+    msg_type: "geometry_msgs/msg/Twist"
+    format: cdr
