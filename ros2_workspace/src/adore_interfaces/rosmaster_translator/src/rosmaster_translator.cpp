@@ -17,16 +17,17 @@
 #include <string>
 #include "rclcpp/rclcpp.hpp"
 #include "std_msgs/msg/string.hpp"
+#include "geometry_msgs/msg/twist.hpp"
 
 using namespace std::chrono_literals;
 
-class Ros2HelloWorld : public rclcpp::Node
+class RosmasterTranslator : public rclcpp::Node
 {
   private:
     /******************************* PUBLISHERS RELATED MEMBERS ************************************************************/
     rclcpp::TimerBase::SharedPtr mainTimer;
 
-    rclcpp::Publisher<std_msgs::msg::String>::SharedPtr publisherString;
+    rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr publisherString;
 
     /******************************* SUBSCRIBERS RELATED MEMBERS ************************************************************/
     rclcpp::Subscription<std_msgs::msg::String>::SharedPtr subscriberString;
@@ -35,20 +36,26 @@ class Ros2HelloWorld : public rclcpp::Node
     std_msgs::msg::String latestRecievedStringMessage;
 
   public:
-    Ros2HelloWorld() : Node("ros2_hello_world")
+    RosmasterTranslator() : Node("rosmaster_translator")
     {
-      mainTimer = this->create_wall_timer(100ms, std::bind(&Ros2HelloWorld::Run, this));
-      publisherString = this->create_publisher<std_msgs::msg::String>("publishing_topic_name", 10);
+      mainTimer = this->create_wall_timer(100ms, std::bind(&RosmasterTranslator::Run, this));
+      publisherString = this->create_publisher<geometry_msgs::msg::Twist>("cmd_vel", 10);
 
-      subscriberString = this->create_subscription<std_msgs::msg::String>("subscribing_topic_name", 10, std::bind(&Ros2HelloWorld::SubscriberStringCallback, this, std::placeholders::_1));
+      subscriberString = this->create_subscription<std_msgs::msg::String>("subscribing_topic_name", 10, std::bind(&RosmasterTranslator::SubscriberStringCallback, this, std::placeholders::_1));
     }
 
     /******************************* PUBLISHER RELATED FUNCTIONS ************************************************************/
 
     void Run(){
-      std_msgs::msg::String message;
-      message.data = "Hello, World!";
-      RCLCPP_INFO(this->get_logger(), "Publishing: '%s'", message.data.c_str());
+      geometry_msgs::msg::Twist message;
+      //message = "{linear: {x: 0.1, y: 0.0, z: 0.0}, angular: {x: 0.0, y: 0.0, z: 0.0}}";
+      message.linear.x = 0.1;
+      message.linear.y = 0.0;
+      message.linear.z = 0.0;
+      message.angular.x = 0.0;
+      message.angular.y = 0.0;
+      message.angular.z = 0.0;
+      RCLCPP_INFO(this->get_logger(), "Velocity: '%f'", message.linear.x);
       publisherString->publish(message);
       rclcpp::sleep_for(std::chrono::seconds(1));
     }
@@ -62,7 +69,7 @@ class Ros2HelloWorld : public rclcpp::Node
 
 int main(int argc, char * argv[]){
   rclcpp::init(argc, argv);
-  rclcpp::spin(std::make_shared<Ros2HelloWorld>());
+  rclcpp::spin(std::make_shared<RosmasterTranslator>());
   rclcpp::shutdown();
   return 0;
 }
