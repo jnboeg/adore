@@ -25,6 +25,9 @@ namespace adore
 
 		subscriber_vehicle_command = create_subscription<adore_ros2_msgs::msg::VehicleCommand>( "/ego_vehicle/next_vehicle_command", 1,
                                       		[this](const adore_ros2_msgs::msg::VehicleCommand& msg) { latest_vehicle_command = dynamics::conversions::to_cpp_type(msg); });
+	
+		subscriber_amcl_pose = create_subscription<geometry_msgs::msg::PoseWithCovarianceStamped>("/amcl_pose", 1, 
+											[this](const geometry_msgs::msg::PoseWithCovarianceStamped& msg) {latest_amcl_pose = msg;});		
 	}
 
     /******************************* PUBLISHER RELATED FUNCTIONS ************************************************************/

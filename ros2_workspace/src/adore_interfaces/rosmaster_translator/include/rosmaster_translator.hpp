@@ -12,6 +12,7 @@
 #include "rclcpp/rclcpp.hpp"
 #include "std_msgs/msg/string.hpp"
 #include "geometry_msgs/msg/twist.hpp"
+#include "geometry_msgs/msg/pose_with_covariance_stamped.hpp"
 
 
 using namespace std::chrono_literals;
@@ -32,9 +33,12 @@ namespace adore
 
         /******************************* SUBSCRIBERS RELATED MEMBERS ************************************************************/
         rclcpp::Subscription<adore_ros2_msgs::msg::VehicleCommand>::SharedPtr      subscriber_vehicle_command;
+        rclcpp::Subscription<geometry_msgs::msg::PoseWithCovarianceStamped>::SharedPtr      subscriber_amcl_pose;
+    
 
         /******************************* OTHER MEMBERS *************************************************************************/
         std::optional<dynamics::VehicleCommand> latest_vehicle_command = std::nullopt;
+        std::optional<geometry_msgs::msg::PoseWithCovarianceStamped> latest_amcl_pose = std::nullopt;
 
         double velocity = 0.0; // This assumption is fine when the vehicle starts standing
 
