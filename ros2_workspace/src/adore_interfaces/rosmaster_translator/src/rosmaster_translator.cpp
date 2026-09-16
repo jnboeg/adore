@@ -22,12 +22,13 @@ namespace adore
     {
 		main_timer = create_wall_timer(50ms, std::bind(&RosmasterTranslator::timer_callback, this));
 		publisher_cmd_vel = create_publisher<geometry_msgs::msg::Twist>("cmd_vel", 1);
+		//publisher_vehicle_state_dynamic = create_publisher<adore_ros2_msgs::msg::VehicleStateDynamic>("/ego_vehicle_state_dynamic", 1);
 
 		subscriber_vehicle_command = create_subscription<adore_ros2_msgs::msg::VehicleCommand>( "/ego_vehicle/next_vehicle_command", 1,
                                       		[this](const adore_ros2_msgs::msg::VehicleCommand& msg) { latest_vehicle_command = dynamics::conversions::to_cpp_type(msg); });
-	
-		subscriber_amcl_pose = create_subscription<geometry_msgs::msg::PoseWithCovarianceStamped>("/amcl_pose", 1, 
-											[this](const geometry_msgs::msg::PoseWithCovarianceStamped& msg) {latest_amcl_pose = msg;});		
+		subscriber_vel_raw = create_subscription<geometry_msgs::msg::Twist>("/vel_raw", 1, 
+									[this](const geometry_msgs::msg::Twist& msg) { latest_vel_raw = msg; });
+
 	}
 
     /******************************* PUBLISHER RELATED FUNCTIONS ************************************************************/
@@ -52,6 +53,24 @@ namespace adore
   		message.angular.y = 0.0;
 		message.angular.z = deriviate_steering_angle(vehicle_command.steering_angle);
   		//message.angular.z = 0.5;
+
+		geometry_msgs::msg::Twist vel_raw;
+		this->last_vel_raw = vel_raw;
+		vel_raw = this->latest_vel_raw;
+
+		adore_ros2_msgs::msg::VehicleStateDynamic state;
+		//state.x = ;
+		//state.y = ;
+		//state.z = ;
+		state.vx = vel_raw.linear.x;
+		state.vy = 0.0;
+		//state.yaw_angle = ;
+		//state.yaw_rate = ;
+		state.steering_angle = euler_integrate_steering_rate(vel_raw.angular.z);
+		state.steering_rate = vel_raw.angular.z;
+		state.ax = deriviate_velocity(vel_raw.linear.x, last_vel_raw.linear.x);
+		state.ay = 0.0;
+		//state.frame_id = "base_link"; ???
 
   		RCLCPP_INFO(this->get_logger(), "Velocity: '%f', Steering rate: '%f'", message.linear.x, message.angular.z);
   		publisher_cmd_vel->publish(message);
@@ -79,5 +98,17 @@ namespace adore
 		steering_rate = steering_angle / VEHICLE_COMMAND_DELTA_TIME_SECONDS;
 
 		return steering_rate;
+	}
+
+	double RosmasterTranslator::deriviate_velocity( const double& velocity_latest, const double& velocity_last) {
+		acceleration = (velocity_latest - velocity_last) / VEHICLE_COMMAND_DELTA_TIME_SECONDS;
+
+		return acceleration * ADORE_ROSMASTER_SCALE;
+	}
+
+	double RosmasterTranslator::euler_integrate_steering_rate(const double& steering_rate) {
+		steering_angle += steering_rate * VEHICLE_COMMAND_DELTA_TIME_SECONDS;
+
+		return steering_angle;
 	}
 }

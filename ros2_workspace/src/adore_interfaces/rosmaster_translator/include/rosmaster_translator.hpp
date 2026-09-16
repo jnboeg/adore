@@ -8,6 +8,7 @@
 #include "adore_dynamics_adapters.hpp"
 #include "adore_dynamics_conversions.hpp"
 #include "adore_ros2_msgs/msg/vehicle_command.hpp"
+#include "adore_ros2_msgs/msg/vehicle_state_dynamic.hpp"
 
 #include "rclcpp/rclcpp.hpp"
 #include "std_msgs/msg/string.hpp"
@@ -28,21 +29,24 @@ namespace adore
     {
         private:
         /******************************* PUBLISHERS RELATED MEMBERS ************************************************************/
-        rclcpp::TimerBase::SharedPtr                                main_timer;                                 
-        rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr     publisher_cmd_vel;
+        rclcpp::TimerBase::SharedPtr                                            main_timer;                                 
+        rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr                 publisher_cmd_vel;
+        rclcpp::Publisher<adore_ros2_msgs::msg::VehicleStateDynamic>::SharedPtr   publisher_vehicle_state_dynamic;
 
         /******************************* SUBSCRIBERS RELATED MEMBERS ************************************************************/
-        rclcpp::Subscription<adore_ros2_msgs::msg::VehicleCommand>::SharedPtr      subscriber_vehicle_command;
-        rclcpp::Subscription<geometry_msgs::msg::PoseWithCovarianceStamped>::SharedPtr      subscriber_amcl_pose;
-    
+        rclcpp::Subscription<adore_ros2_msgs::msg::VehicleCommand>::SharedPtr   subscriber_vehicle_command;
+        rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr              subscriber_vel_raw;
 
         /******************************* OTHER MEMBERS *************************************************************************/
         std::optional<dynamics::VehicleCommand> latest_vehicle_command = std::nullopt;
-        std::optional<geometry_msgs::msg::PoseWithCovarianceStamped> latest_amcl_pose = std::nullopt;
+        geometry_msgs::msg::Twist latest_vel_raw;
+        geometry_msgs::msg::Twist last_vel_raw;
 
         double velocity = 0.0; // This assumption is fine when the vehicle starts standing
-
         double steering_rate = 0.0;
+
+        double acceleration = 0.0;
+        double steering_angle = 0.0;
 
         public:
         explicit RosmasterTranslator();
@@ -54,5 +58,8 @@ namespace adore
         double euler_integrate_acceleration( const double& acceleration );
         double velocity_scaling(const double& acceleration);
         double deriviate_steering_angle( const double& steering_angle);
+
+        double deriviate_velocity(const double& velocity_latest, const double& velocity_last);
+        double euler_integrate_steering_rate(const double& steering_rate);
     };
 }
