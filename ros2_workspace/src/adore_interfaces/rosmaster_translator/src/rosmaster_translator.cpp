@@ -20,6 +20,9 @@ namespace adore
 {
     RosmasterTranslator::RosmasterTranslator() : Node("rosmaster_translator")
     {
+		tf_buffer = std::make_unique<tf2_ros::Buffer>(this->get_clock());
+    	tf_listener = std::make_shared<tf2_ros::TransformListener>(*tf_buffer);
+
 		main_timer = create_wall_timer(50ms, std::bind(&RosmasterTranslator::timer_callback, this));
 		publisher_cmd_vel = create_publisher<geometry_msgs::msg::Twist>("cmd_vel", 1);
 		//publisher_vehicle_state_dynamic = create_publisher<adore_ros2_msgs::msg::VehicleStateDynamic>("/ego_vehicle_state_dynamic", 1);
@@ -45,26 +48,37 @@ namespace adore
 
   		geometry_msgs::msg::Twist message;
   		//message = "{linear: {x: 0.1, y: 0.0, z: 0.0}, angular: {x: 0.0, y: 0.0, z: 0.0}}";
-  		message.linear.x = velocity_scaling(euler_integrate_acceleration(vehicle_command.acceleration));
-		//message.linear.x = euler_integrate_acceleration(vehicle_command.acceleration);
+		message.linear.x = euler_integrate_acceleration(vehicle_command.acceleration);
   		message.linear.y = 0.0;
   		message.linear.z = 0.0;
   		message.angular.x = 0.0;
   		message.angular.y = 0.0;
 		message.angular.z = deriviate_steering_angle(vehicle_command.steering_angle);
-  		//message.angular.z = 0.5;
 
 		geometry_msgs::msg::Twist vel_raw;
 		this->last_vel_raw = vel_raw;
 		vel_raw = this->latest_vel_raw;
 
+		auto transform = tf_buffer->lookupTransform(
+			"map",
+			"base_link",
+			tf2::TimePointZero
+		);
+
+		x = transform.transform.translation.x;
+		y = transform.transform.translation.y;
+
+		tf2::Quaternion quaternion(transform.transform.rotation.x, transform.transform.rotation.y, transform.transform.rotation.z, transform.transform.rotation.w);
+		
+		tf2::Matrix3x3(quaternion).getRPY(roll, pitch, yaw);
+
 		adore_ros2_msgs::msg::VehicleStateDynamic state;
-		//state.x = ;
-		//state.y = ;
-		//state.z = ;
+		state.x = x;
+		state.y = y;
+		state.z = 0.0;
 		state.vx = vel_raw.linear.x;
 		state.vy = 0.0;
-		//state.yaw_angle = ;
+		state.yaw_angle = yaw;
 		//state.yaw_rate = ;
 		state.steering_angle = euler_integrate_steering_rate(vel_raw.angular.z);
 		state.steering_rate = vel_raw.angular.z;
@@ -88,11 +102,6 @@ namespace adore
       return velocity;
     }
 
-	double RosmasterTranslator::velocity_scaling(const double& velocity)
-	{
-		return velocity / ADORE_ROSMASTER_SCALE;
-	}
-
 	double RosmasterTranslator::deriviate_steering_angle( const double& steering_angle)
 	{
 		steering_rate = steering_angle / VEHICLE_COMMAND_DELTA_TIME_SECONDS;
@@ -103,7 +112,7 @@ namespace adore
 	double RosmasterTranslator::deriviate_velocity( const double& velocity_latest, const double& velocity_last) {
 		acceleration = (velocity_latest - velocity_last) / VEHICLE_COMMAND_DELTA_TIME_SECONDS;
 
-		return acceleration * ADORE_ROSMASTER_SCALE;
+		return acceleration;
 	}
 
 	double RosmasterTranslator::euler_integrate_steering_rate(const double& steering_rate) {
