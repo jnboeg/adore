@@ -65,3 +65,12 @@ zenoh_to_ros2:
   - ros_topic: "/cmd_vel"
     msg_type: "geometry_msgs/msg/Twist"
     format: cdr
+  - ros_topic: "/tf"
+    msg_type: "tf2_msgs/msg/TFMessage"
+    format: cdr
+  - ros_topic: "/tf_static"
+    msg_type: "tf2_msgs/msg/TFMessage"
+    format: cdr
+    qos_reliability: reliable
+    qos_durability: transient_local
+    qos_depth: 100

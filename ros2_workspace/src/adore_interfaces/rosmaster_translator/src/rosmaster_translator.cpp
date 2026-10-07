@@ -25,7 +25,7 @@ namespace adore
 
 		main_timer = create_wall_timer(50ms, std::bind(&RosmasterTranslator::timer_callback, this));
 		publisher_cmd_vel = create_publisher<geometry_msgs::msg::Twist>("cmd_vel", 1);
-		//publisher_vehicle_state_dynamic = create_publisher<adore_ros2_msgs::msg::VehicleStateDynamic>("/ego_vehicle_state_dynamic", 1);
+		publisher_vehicle_state_dynamic = create_publisher<adore_ros2_msgs::msg::VehicleStateDynamic>("/ego_vehicle_state_dynamic", 1);
 
 		subscriber_vehicle_command = create_subscription<adore_ros2_msgs::msg::VehicleCommand>( "/ego_vehicle/next_vehicle_command", 1,
                                       		[this](const adore_ros2_msgs::msg::VehicleCommand& msg) { latest_vehicle_command = dynamics::conversions::to_cpp_type(msg); });
@@ -97,6 +97,8 @@ namespace adore
 
   		RCLCPP_INFO(this->get_logger(), "Velocity: '%f', Steering rate: '%f'", message.linear.x, message.angular.z);
   		publisher_cmd_vel->publish(message);
+		RCLCPP_INFO(this->get_logger(), "X: %f, Y: %f, yaw: %f", state.x, state.y, state.yaw_angle);
+		publisher_vehicle_state_dynamic->publish(state);
     }
 
 	void RosmasterTranslator::load_parameters()
