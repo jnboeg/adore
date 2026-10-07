@@ -44,6 +44,8 @@ namespace adore
     		return;
     	}
 
+		load_parameters();
+
     	dynamics::VehicleCommand vehicle_command = this->latest_vehicle_command.value();
 
   		geometry_msgs::msg::Twist message;
@@ -65,6 +67,13 @@ namespace adore
 			tf2::TimePointZero
 		);
 
+		if(!initial_position_set) {
+			initial_position_x = transform.transform.translation.x;
+			initial_position_y = transform.transform.translation.y;
+			calculate_offset();
+			initial_position_set = true;
+		}
+
 		x = transform.transform.translation.x;
 		y = transform.transform.translation.y;
 
@@ -73,8 +82,8 @@ namespace adore
 		tf2::Matrix3x3(quaternion).getRPY(roll, pitch, yaw);
 
 		adore_ros2_msgs::msg::VehicleStateDynamic state;
-		state.x = x;
-		state.y = y;
+		state.x = x + offset_x;
+		state.y = y + offset_y;
 		state.z = 0.0;
 		state.vx = vel_raw.linear.x;
 		state.vy = 0.0;
@@ -89,6 +98,20 @@ namespace adore
   		RCLCPP_INFO(this->get_logger(), "Velocity: '%f', Steering rate: '%f'", message.linear.x, message.angular.z);
   		publisher_cmd_vel->publish(message);
     }
+
+	void RosmasterTranslator::load_parameters()
+	{
+		start_position_x = declare_parameter<double>( "set_start_utm_position_x", 0.0 );
+  		start_position_y = declare_parameter<double>( "set_start_utm_position_y", 0.0 );
+	
+		utm_zone = declare_parameter<int>( "set_start_utm_zone_number", 32 );
+  		utm_letter = declare_parameter<std::string>( "set_start_utm_zone_letter", "U" );
+	}
+
+	void RosmasterTranslator::calculate_offset() {
+		offset_x = start_position_x - initial_position_x;
+		offset_y = start_position_y - initial_position_y;
+	}
 
     double RosmasterTranslator::euler_integrate_acceleration( const double& acceleration )
     {

@@ -35,9 +35,12 @@ namespace adore
         std::unique_ptr<tf2_ros::Buffer>                tf_buffer;
         std::shared_ptr<tf2_ros::TransformListener>     tf_listener;
         
-        /******************************* PUBLISHERS RELATED MEMBERS ************************************************************/
-        rclcpp::TimerBase::SharedPtr                                                main_timer;                                 
+        rclcpp::TimerBase::SharedPtr                    main_timer;
+
+        /******************************* PUBLISHERS RELATED MEMBERS ************************************************************/                                 
+        //Publisher to Rosmaster
         rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr                     publisher_cmd_vel;
+        //Publisher to ADORe
         rclcpp::Publisher<adore_ros2_msgs::msg::VehicleStateDynamic>::SharedPtr     publisher_vehicle_state_dynamic;
 
         /******************************* SUBSCRIBERS RELATED MEMBERS ************************************************************/
@@ -51,8 +54,21 @@ namespace adore
         geometry_msgs::msg::TransformStamped latest_tf;
         geometry_msgs::msg::TransformStamped initial_tf;
 
-        double x, y;
+        bool initial_position_set = false;
+        double initial_position_x = 0;
+        double initial_position_y = 0;
 
+        double offset_x = 0;
+        double offset_y = 0;
+
+        double start_position_x = 0;
+        double start_position_y = 0;
+
+        int utm_zone;
+        std::string utm_letter;
+
+        double x, y;
+        
         double roll, pitch, yaw;
 
         double velocity = 0.0; // This assumption is fine when the vehicle starts standing
@@ -65,6 +81,10 @@ namespace adore
         explicit RosmasterTranslator();
 
         void timer_callback();
+
+        void calculate_offset();
+
+        void load_parameters();
 
         double euler_integrate_acceleration( const double& acceleration );
         double deriviate_steering_angle( const double& steering_angle);
