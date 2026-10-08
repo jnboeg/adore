@@ -20,6 +20,9 @@ namespace adore
 {
     RosmasterTranslator::RosmasterTranslator() : Node("rosmaster_translator")
     {
+		rclcpp::QoS qos(1);
+		qos.best_effort();
+
 		tf_buffer = std::make_unique<tf2_ros::Buffer>(this->get_clock());
     	tf_listener = std::make_shared<tf2_ros::TransformListener>(*tf_buffer);
 
@@ -29,7 +32,7 @@ namespace adore
 
 		subscriber_vehicle_command = create_subscription<adore_ros2_msgs::msg::VehicleCommand>( "/ego_vehicle/next_vehicle_command", 1,
                                       		[this](const adore_ros2_msgs::msg::VehicleCommand& msg) { latest_vehicle_command = dynamics::conversions::to_cpp_type(msg); });
-		subscriber_vel_raw = create_subscription<geometry_msgs::msg::Twist>("/vel_raw", 1, 
+		subscriber_vel_raw = create_subscription<geometry_msgs::msg::Twist>("/vel_raw", qos, 
 									[this](const geometry_msgs::msg::Twist& msg) { latest_vel_raw = msg; });
 
 	}
