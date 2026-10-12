@@ -62,9 +62,9 @@ zenoh_to_ros2:
   - ros_topic: "/imu/data_raw"
     msg_type: "sensor_msgs/msg/Imu"
     format: cdr
-  - ros_topic: "/cmd_vel"
-    msg_type: "geometry_msgs/msg/Twist"
-    format: cdr
+  # - ros_topic: "/cmd_vel"
+  #   msg_type: "geometry_msgs/msg/Twist"
+  #   format: cdr
   - ros_topic: "/tf"
     msg_type: "tf2_msgs/msg/TFMessage"
     format: cdr
