@@ -22,13 +22,14 @@ namespace adore
     {
 		rclcpp::QoS qos(1);
 		qos.best_effort();
+		load_parameters();
 
 		tf_buffer = std::make_unique<tf2_ros::Buffer>(this->get_clock());
     	tf_listener = std::make_shared<tf2_ros::TransformListener>(*tf_buffer);
 
 		main_timer = create_wall_timer(50ms, std::bind(&RosmasterTranslator::timer_callback, this));
 		publisher_cmd_vel = create_publisher<geometry_msgs::msg::Twist>("cmd_vel", 1);
-		publisher_vehicle_state_dynamic = create_publisher<adore_ros2_msgs::msg::VehicleStateDynamic>("/ego_vehicle_state_dynamic", 1);
+		publisher_vehicle_state_dynamic = create_publisher<adore_ros2_msgs::msg::VehicleStateDynamic>("/ego_vehicle/vehicle_state_dynamic", 1);
 
 		subscriber_vehicle_command = create_subscription<adore_ros2_msgs::msg::VehicleCommand>( "/ego_vehicle/next_vehicle_command", 1,
                                       		[this](const adore_ros2_msgs::msg::VehicleCommand& msg) { latest_vehicle_command = dynamics::conversions::to_cpp_type(msg); });
@@ -47,8 +48,6 @@ namespace adore
     		return;
     	}
 
-		load_parameters();
-
     	dynamics::VehicleCommand vehicle_command = this->latest_vehicle_command.value();
 
   		geometry_msgs::msg::Twist message;
@@ -64,25 +63,35 @@ namespace adore
 		this->last_vel_raw = vel_raw;
 		vel_raw = this->latest_vel_raw;
 
-		auto transform = tf_buffer->lookupTransform(
-			"map",
-			"base_link",
-			tf2::TimePointZero
-		);
+		if (tf_buffer->canTransform(
+        "map",
+        "base_link",
+        tf2::TimePointZero,
+        tf2::durationFromSec(0.1))) {
 
-		if(!initial_position_set) {
-			initial_position_x = transform.transform.translation.x;
-			initial_position_y = transform.transform.translation.y;
-			calculate_offset();
-			initial_position_set = true;
+			auto transform = tf_buffer->lookupTransform(
+				"map",
+				"base_link",
+				tf2::TimePointZero
+			);
+
+
+				if(!initial_position_set) {
+					initial_position_x = transform.transform.translation.x;
+					initial_position_y = transform.transform.translation.y;
+					calculate_offset();
+					initial_position_set = true;
+				}
+
+			x = transform.transform.translation.x;
+			y = transform.transform.translation.y;
+
+			tf2::Quaternion quaternion(transform.transform.rotation.x, transform.transform.rotation.y, transform.transform.rotation.z, transform.transform.rotation.w);
+			
+			tf2::Matrix3x3(quaternion).getRPY(roll, pitch, yaw);
 		}
-
-		x = transform.transform.translation.x;
-		y = transform.transform.translation.y;
-
-		tf2::Quaternion quaternion(transform.transform.rotation.x, transform.transform.rotation.y, transform.transform.rotation.z, transform.transform.rotation.w);
 		
-		tf2::Matrix3x3(quaternion).getRPY(roll, pitch, yaw);
+		
 
 		adore_ros2_msgs::msg::VehicleStateDynamic state;
 		state.x = x + offset_x;
