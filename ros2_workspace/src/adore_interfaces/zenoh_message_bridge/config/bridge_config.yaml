@@ -34,6 +34,9 @@ ros2_to_zenoh:
   - ros_topic: "/cmd_vel"
     msg_type: "geometry_msgs/msg/Twist"
     format: cdr
+    qos_reliability: reliable
+    qos_durability: volatile
+    qos_depth: 10
 
 # Bridge zenoh topics to ROS2 DDS.
 # The publishing end must be running rmw_zenoh_cpp with a matching zenoh_bridge_id.
