@@ -48,10 +48,14 @@ namespace adore
 
         /******************************* OTHER MEMBERS *************************************************************************/
         std::optional<dynamics::VehicleCommand> latest_vehicle_command = std::nullopt;
+        adore_ros2_msgs::msg::VehicleStateDynamic last_vehicle_state_dynamic;
         geometry_msgs::msg::Twist latest_vel_raw;
         geometry_msgs::msg::Twist last_vel_raw;
         geometry_msgs::msg::TransformStamped latest_tf;
         geometry_msgs::msg::TransformStamped initial_tf;
+
+        rclcpp::Time current_time;
+        rclcpp::Time last_update_time;
 
         bool initial_position_set = false;
         double initial_position_x = 0;
@@ -69,6 +73,7 @@ namespace adore
         double x, y;
         
         double roll, pitch, yaw;
+        double yaw_rate = 0.0;
 
         double velocity = 0.0; // This assumption is fine when the vehicle starts standing
         double steering_rate = 0.0;
@@ -88,6 +93,7 @@ namespace adore
         double euler_integrate_acceleration( const double& acceleration );
         double deriviate_steering_angle( const double& steering_angle);
 
+        double deriviate_yaw_rate(const double& yaw_latest, const double& yaw_last);
         double deriviate_velocity(const double& velocity_latest, const double& velocity_last);
         double euler_integrate_steering_rate(const double& steering_rate);
     };

@@ -22,13 +22,14 @@ namespace adore
     {
 		rclcpp::QoS qos(1);
 		qos.best_effort();
+		
 		load_parameters();
 
 		tf_buffer = std::make_unique<tf2_ros::Buffer>(this->get_clock());
     	tf_listener = std::make_shared<tf2_ros::TransformListener>(*tf_buffer);
 
 		main_timer = create_wall_timer(50ms, std::bind(&RosmasterTranslator::timer_callback, this));
-		publisher_cmd_vel = create_publisher<geometry_msgs::msg::Twist>("cmd_vel", 1);
+		publisher_cmd_vel = create_publisher<geometry_msgs::msg::Twist>("/cmd_vel", 1);
 		publisher_vehicle_state_dynamic = create_publisher<adore_ros2_msgs::msg::VehicleStateDynamic>("/ego_vehicle/vehicle_state_dynamic", 1);
 
 		subscriber_vehicle_command = create_subscription<adore_ros2_msgs::msg::VehicleCommand>( "/ego_vehicle/next_vehicle_command", 1,
@@ -39,10 +40,13 @@ namespace adore
 	}
 
     /******************************* PUBLISHER RELATED FUNCTIONS ************************************************************/
-
+	// ego_vehicle/trajectory_decision (SOLL: label = driving_mission, IF label = waiting for mission)
 
     void RosmasterTranslator::timer_callback()
-    {
+    {	
+		current_time     = now();
+  		last_update_time = current_time;
+
     	if (!this->latest_vehicle_command.has_value())
     	{
     		return;
@@ -100,13 +104,17 @@ namespace adore
 		state.vx = vel_raw.linear.x;
 		state.vy = 0.0;
 		state.yaw_angle = yaw;
-		//state.yaw_rate = ;
+		state.yaw_rate = deriviate_yaw_rate(yaw, last_vehicle_state_dynamic.yaw_rate);
 		state.steering_angle = euler_integrate_steering_rate(vel_raw.angular.z);
 		state.steering_rate = vel_raw.angular.z;
 		state.ax = deriviate_velocity(vel_raw.linear.x, last_vel_raw.linear.x);
 		state.ay = 0.0;
-		//state.frame_id = "base_link"; ???
+		state.time = current_time.seconds();
+		state.header.stamp = current_time;
+		state.header.frame_id = "UTM32U";
+		last_vehicle_state_dynamic = state;
 
+		RCLCPP_INFO(this->get_logger(), "Acceleration: '%f', Steering angle: '%f'", vehicle_command.acceleration, vehicle_command.steering_angle);
   		RCLCPP_INFO(this->get_logger(), "Velocity: '%f', Steering rate: '%f'", message.linear.x, message.angular.z);
   		publisher_cmd_vel->publish(message);
 		RCLCPP_INFO(this->get_logger(), "X: %f, Y: %f, yaw: %f", state.x, state.y, state.yaw_angle);
@@ -144,6 +152,12 @@ namespace adore
 		steering_rate = steering_angle / VEHICLE_COMMAND_DELTA_TIME_SECONDS;
 
 		return steering_rate;
+	}
+
+	double RosmasterTranslator::deriviate_yaw_rate(const double& yaw_latest, const double& yaw_last) {
+		yaw_rate = (yaw_latest - yaw_last) / VEHICLE_COMMAND_DELTA_TIME_SECONDS;
+
+		return yaw_rate;
 	}
 
 	double RosmasterTranslator::deriviate_velocity( const double& velocity_latest, const double& velocity_last) {
