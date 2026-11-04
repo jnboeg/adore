@@ -18,8 +18,10 @@ import threading
 import time
 import json
 import hashlib
+import hmac
 import logging
 import queue
+from urllib.parse import urlsplit
 from datetime import datetime, timezone
 from collections import deque, defaultdict
 from flask import Flask, render_template, request, jsonify, Response
@@ -134,7 +136,95 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 app = Flask(__name__,
             template_folder=os.path.join(_HERE, 'templates'),
             static_folder=os.path.join(_HERE, 'static'))
-CORS(app)
+
+
+def _env_list(name):
+    return [item.strip().rstrip('/') for item in
+            os.environ.get(name, '').split(',') if item.strip()]
+
+
+# ── Security configuration ───────────────────────────────────────────────────
+# The scenario endpoints hand attacker-controlled Python to `ros2 launch`, so the
+# API must never be reachable from an origin the operator did not opt into.
+# Cross-origin access is denied unless ADORE_API_CORS_ORIGINS lists explicit
+# origins; the bundled Mission Control UI is same-origin and unaffected.
+ALLOWED_ORIGINS = _env_list('ADORE_API_CORS_ORIGINS')
+API_TOKEN = (os.environ.get('ADORE_API_TOKEN') or '').strip() or None
+TOKEN_COOKIE = 'adore_api_token'
+SAFE_METHODS = frozenset(('GET', 'HEAD', 'OPTIONS'))
+
+CORS(app, origins=ALLOWED_ORIGINS, supports_credentials=False)
+
+
+def _origin_allowed(source):
+    parts = urlsplit(source)
+    if not parts.netloc:
+        return False
+    if parts.netloc == request.host:
+        return True
+    origin = f"{parts.scheme}://{parts.netloc}"
+    return any(origin == allowed for allowed in ALLOWED_ORIGINS)
+
+
+def _presented_token():
+    header = request.headers.get('Authorization', '')
+    if header.startswith('Bearer '):
+        return header[len('Bearer '):].strip()
+    return (request.headers.get('X-ADORE-API-Token')
+            or request.args.get('token')
+            or request.cookies.get(TOKEN_COOKIE))
+
+
+@app.before_request
+def _enforce_access_control():
+    if API_TOKEN is not None:
+        presented = _presented_token()
+        if not presented or not hmac.compare_digest(
+                presented.encode('utf-8', 'replace'), API_TOKEN.encode('utf-8')):
+            return jsonify({
+                "success": False,
+                "message": "Missing or invalid API token",
+            }), 401
+
+    if request.method in SAFE_METHODS:
+        return None
+
+    # State-changing requests carry an Origin (or at least a Referer) when they
+    # come from a browser. Anything not on the allowlist is a cross-site request
+    # the operator never initiated.
+    source = request.headers.get('Origin') or request.headers.get('Referer')
+    if source and not _origin_allowed(source):
+        return jsonify({
+            "success": False,
+            "message": "Cross-origin request rejected",
+        }), 403
+
+    return None
+
+
+@app.after_request
+def _persist_token_cookie(response):
+    if API_TOKEN is None or response.status_code == 401:
+        return response
+    if request.args.get('token') and not request.cookies.get(TOKEN_COOKIE):
+        response.set_cookie(TOKEN_COOKIE, API_TOKEN, httponly=True,
+                            samesite='Strict', secure=request.is_secure)
+    return response
+
+# Register hardware monitor blueprint
+# adore_api.py lives at tools/adore_api/adore_api.py
+# hardware_monitor lives at ros2_workspace/src/adore_interfaces/hardware_monitor/
+_HW_MONITOR_PATH = os.path.normpath(
+    os.path.join(_HERE, '..', '..', 'ros2_workspace', 'src', 'adore_interfaces', 'hardware_monitor')
+)
+if _HW_MONITOR_PATH not in sys.path:
+    sys.path.insert(0, _HW_MONITOR_PATH)
+try:
+    from hardware_monitor.hardware_monitor_api import get_hardware_monitor_blueprint as _get_hw_bp
+    app.register_blueprint(_get_hw_bp())
+    print(f"✓ Hardware monitor blueprint registered (path: {_HW_MONITOR_PATH})")
+except Exception as _hw_err:
+    print(f"✗ Hardware monitor blueprint not available: {_hw_err}")
 
 # Register hardware monitor blueprint
 # adore_api.py lives at tools/adore_api/adore_api.py
@@ -155,7 +245,7 @@ LOG_DIRECTORY = None
 
 stored_positions = {
     'start': None,
-    'goal': None
+    'goals': []
 }
 
 
@@ -508,6 +598,7 @@ class ScenarioManager:
         self.output_lock = threading.Lock()
         self.scenario_start_time = None
         self.loop_active = False
+        self.loop_restarting = False
         self.model_check_enabled = True
         self.model_check_config = "config/default.yaml"
         self.current_model_check_run_id = None
@@ -529,9 +620,23 @@ class ScenarioManager:
                     scenarios.append(rel_path)
         return scenarios
 
+    def resolve_scenario_path(self, scenario_path):
+        """
+        Resolve a client-supplied path against base_directory and refuse anything
+        that escapes it (absolute paths, '..' traversal, symlinks pointing out).
+        """
+        if not scenario_path or not isinstance(scenario_path, str):
+            raise ValueError("Scenario path is required")
+
+        base = os.path.realpath(self.base_directory)
+        full_path = os.path.realpath(os.path.join(base, scenario_path))
+        if full_path != base and not full_path.startswith(base + os.sep):
+            raise ValueError(f"Scenario path outside scenario directory: {scenario_path}")
+        return full_path
+
     def get_scenario_content(self, scenario_path):
         try:
-            full_path = os.path.join(self.base_directory, scenario_path)
+            full_path = self.resolve_scenario_path(scenario_path)
             if os.path.exists(full_path):
                 with open(full_path, 'r') as f:
                     return {"success": True, "content": f.read(), "path": scenario_path}
@@ -540,23 +645,7 @@ class ScenarioManager:
         except Exception as e:
             return {"success": False, "message": f"Error reading scenario: {str(e)}"}
 
-    def save_scenario(self, scenario_name, content):
-        try:
-            if not scenario_name.endswith('.launch.py'):
-                scenario_name += '.launch.py'
-
-            full_path = os.path.join(self.base_directory, scenario_name)
-
-            os.makedirs(os.path.dirname(full_path), exist_ok=True)
-
-            with open(full_path, 'w') as f:
-                f.write(content)
-
-            return {"success": True, "message": f"Scenario saved as {scenario_name}"}
-        except Exception as e:
-            return {"success": False, "message": f"Error saving scenario: {str(e)}"}
-
-    def start_model_check_then_scenario(self, scenario_input, is_file=True, model_check_enabled=True, model_check_config="config/default.yaml"):
+    def start_model_check_then_scenario(self, scenario_input, model_check_enabled=True, model_check_config="config/default.yaml"):
         """Start scenario first, wait for ROS nodes to publish, then start model checker"""
         if self.current_process and self.current_process.poll() is None:
             return {"success": False, "message": "Scenario already running"}
@@ -568,7 +657,7 @@ class ScenarioManager:
 
             # Step 1: Start the scenario
             print("Starting scenario...")
-            scenario_result = self.start_scenario(scenario_input, is_file)
+            scenario_result = self.start_scenario(scenario_input)
             if not scenario_result["success"]:
                 return scenario_result
 
@@ -694,61 +783,46 @@ class ScenarioManager:
             traceback.print_exc()
             return {"success": False, "message": f"Exception starting model check: {str(e)}"}
 
-    def start_scenario(self, scenario_input, is_file=True):
+    def start_scenario(self, scenario_input):
         if self.current_process and self.current_process.poll() is None:
             return {"success": False, "message": "Scenario already running"}
 
         try:
-            if is_file:
-                # scenario_input like:
-                #   "adore_simulation_scenarios/dlr_118_to_gate.launch.py"
-                # relative to self.base_directory (which points at adore_scenarios/)
-                scenario_path = os.path.join(
-                    self.base_directory, scenario_input)
-                full_path = os.path.abspath(scenario_path)
+            # scenario_input like:
+            #   "adore_simulation_scenarios/dlr_118_to_gate.launch.py"
+            # relative to self.base_directory (which points at adore_scenarios/)
+            try:
+                full_path = self.resolve_scenario_path(scenario_input)
+            except ValueError as e:
+                return {"success": False, "message": str(e)}
 
-                if not os.path.exists(full_path):
-                    return {
-                        "success": False,
-                        "message": f"Scenario file not found: {full_path}",
-                    }
+            if not full_path.endswith(('.launch.py', '.launch.xml')):
+                return {
+                    "success": False,
+                    "message": "Scenario must be a .launch.py or .launch.xml file",
+                }
 
-                # Store content for status/debug
-                with open(full_path, "r") as f:
-                    self.current_scenario_content = f.read()
+            if not os.path.exists(full_path):
+                return {
+                    "success": False,
+                    "message": f"Scenario file not found: {full_path}",
+                }
 
-                # 🔧 Important: use absolute path, not package/file
-                # This maps directly onto the working CLI command:
-                #   ros2 launch /abs/path/to/launch.py
-                cmd = ["ros2", "launch", full_path]
-                cwd = None
-                self.current_scenario = scenario_input
+            # Store content for status/debug
+            with open(full_path, "r") as f:
+                self.current_scenario_content = f.read()
 
-                print(
-                    f"[ScenarioManager] Starting scenario via ros2 launch: "
-                    f"{full_path} (base_directory='{self.base_directory}')"
-                )
-            else:
-                # Always write the temp file into simulation_scenarios/ so
-                # that sys.path.append(os.path.dirname(__file__)) inside the
-                # launch file resolves position.py, simulated_vehicle.py etc.
-                scenario_dir = os.path.join(self.base_directory, "simulation_scenarios")
-                os.makedirs(scenario_dir, exist_ok=True)
-                temp_file = os.path.join(scenario_dir, "temp_custom_scenario.launch.py")
-                full_path = os.path.abspath(temp_file)
+            # 🔧 Important: use absolute path, not package/file
+            # This maps directly onto the working CLI command:
+            #   ros2 launch /abs/path/to/launch.py
+            cmd = ["ros2", "launch", full_path]
+            cwd = None
+            self.current_scenario = scenario_input
 
-                with open(full_path, "w") as f:
-                    f.write(scenario_input)
-
-                self.current_scenario_content = scenario_input
-                self.current_scenario = os.path.relpath(full_path, self.base_directory)
-
-                cmd = ["ros2", "launch", full_path]
-                cwd = None
-
-                print(
-                    f"[ScenarioManager] Starting custom scenario from temp file: {full_path}"
-                )
+            print(
+                f"[ScenarioManager] Starting scenario via ros2 launch: "
+                f"{full_path} (base_directory='{self.base_directory}')"
+            )
 
             scenario_env = _source_workspace_env()
             self.current_process = subprocess.Popen(
@@ -886,6 +960,9 @@ class ScenarioManager:
 
             self.status = "idle"
             self.current_process = None
+            self.loop_mode = False
+            self.loop_active = False
+            self.loop_restarting = False
             return {"success": True, "message": f"Halted {len(ros2_pids_to_kill)} ROS2 processes"}
 
         except Exception as e:
@@ -898,7 +975,6 @@ class ScenarioManager:
         if self.current_scenario:
             return self.start_model_check_then_scenario(
                 self.current_scenario,
-                is_file=True,
                 model_check_enabled=self.model_check_enabled,
                 model_check_config=self.model_check_config
             )
@@ -978,13 +1054,14 @@ class ScenarioManager:
             "scenario_content": self.current_scenario_content,
             "loop_mode": self.loop_mode,
             "loop_delay": self.loop_delay,
+            "loop_restarting": self.loop_restarting,
             "default_runtime": self.default_runtime,
             "runtime": runtime,
             "pid": self.current_process.pid if self.current_process else None,
             "model_check_enabled": self.model_check_enabled,
             "model_check_config": self.model_check_config,
             "waiting_for_model_check": self.waiting_for_model_check,
-            "current_model_check_run_id": self.current_model_check_run_id  # Add this line
+            "current_model_check_run_id": self.current_model_check_run_id
         }
 
     def set_loop_mode(self, enabled, delay=0, runtime=60, model_check_enabled=True, model_check_config="config/default.yaml"):
@@ -1015,91 +1092,96 @@ class ScenarioManager:
                 with self.output_lock:
                     self.output_buffer.append(formatted_line)
 
+    def _halt_process_only(self):
+        """Kill current process and ROS nodes without clearing loop state."""
+        try:
+            result = subprocess.run(["ps", "aux"], capture_output=True, text=True, check=False)
+            pids = []
+            for line in result.stdout.strip().split('\n')[1:]:
+                parts = line.split()
+                if len(parts) < 11:
+                    continue
+                cmd = ' '.join(parts[10:])
+                if not any(kw in cmd.lower() for kw in ['ros2 launch', 'ros2 run', 'ros2 bag', 'launch.py']):
+                    continue
+                if any(ex in cmd.lower() for ex in ['docker', 'containerd', 'adore-cli-main', '/bin/bash', '/bin/zsh']):
+                    continue
+                pids.append(parts[1])
+            for pid in pids:
+                subprocess.run(["kill", "-TERM", pid], check=False, timeout=5)
+            time.sleep(2)
+            for pid in pids:
+                subprocess.run(["kill", "-KILL", pid], check=False, timeout=5)
+        except Exception:
+            pass
+
+        if self.current_process:
+            try:
+                self.current_process.terminate()
+                self.current_process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                self.current_process.kill()
+                self.current_process.wait()
+            except Exception:
+                pass
+
+        self.status = "idle"
+        self.current_process = None
+
+    def _loop_restart(self, reason):
+        """Halt, wait for model check, delay, then restart. Runs inside _loop_monitor."""
+        self.loop_restarting = True
+        try:
+            print(f"Loop: {reason}, halting...")
+            self._halt_process_only()
+
+            if self.waiting_for_model_check:
+                print("Loop: Waiting for model check to complete...")
+                max_wait = 300
+                wait_start = time.time()
+                while self.waiting_for_model_check and (time.time() - wait_start) < max_wait:
+                    if self.is_model_check_complete():
+                        break
+                    time.sleep(2)
+                with self.model_check_lock:
+                    self.waiting_for_model_check = False
+
+            time.sleep(2)
+
+            if not self.loop_mode or not self.loop_active:
+                return
+
+            if self.loop_delay > 0:
+                print(f"Loop: Waiting {self.loop_delay}s before restart...")
+                time.sleep(self.loop_delay)
+
+            if not self.loop_mode or not self.loop_active:
+                return
+
+            scenario = self.current_scenario
+
+            print(f"Loop: Restarting scenario: {scenario}")
+            self.start_model_check_then_scenario(
+                scenario,
+                model_check_enabled=self.model_check_enabled,
+                model_check_config=self.model_check_config
+            )
+        finally:
+            self.loop_restarting = False
+
     def _loop_monitor(self):
         while self.loop_active:
-            if self.loop_mode and self.current_scenario:
-                # Check if scenario is running
+            if self.loop_mode and self.current_scenario and not self.loop_restarting:
                 if self.current_process and self.current_process.poll() is None:
-                    # Check if runtime has been exceeded
                     if self.scenario_start_time and (time.time() - self.scenario_start_time) >= self.default_runtime:
-                        print(
-                            f"Loop: Runtime ({self.default_runtime}s) reached, halting...")
-                        self.halt_all()
-
-                        # Wait for model checking to complete if it's running
-                        if self.waiting_for_model_check:
-                            print("Loop: Waiting for model checking to complete...")
-                            max_wait_time = 300  # 5 minutes max wait
-                            wait_start = time.time()
-
-                            while self.waiting_for_model_check and (time.time() - wait_start) < max_wait_time:
-                                if self.is_model_check_complete():
-                                    print("Loop: Model checking completed")
-                                    break
-                                time.sleep(2)
-
-                            if self.waiting_for_model_check:
-                                print(
-                                    "Loop: Model checking timeout, proceeding anyway")
-                                with self.model_check_lock:
-                                    self.waiting_for_model_check = False
-
-                        time.sleep(2)
-
-                        if self.loop_mode and self.current_scenario:
-                            print(
-                                f"Loop: Waiting {self.loop_delay}s before restart...")
-                            time.sleep(self.loop_delay)
-                            print(
-                                f"Loop: Starting scenario: {self.current_scenario}")
-                            self.start_model_check_then_scenario(
-                                self.current_scenario,
-                                is_file=True,
-                                model_check_enabled=self.model_check_enabled,
-                                model_check_config=self.model_check_config
-                            )
-
+                        self._loop_restart(f"runtime ({self.default_runtime}s) reached")
                 elif self.current_process and self.current_process.poll() is not None:
-                    print(
-                        f"Loop: Process ended, waiting for model check and restarting after {self.loop_delay}s...")
-
-                    # Wait for model checking to complete
-                    if self.waiting_for_model_check:
-                        print(
-                            "Loop: Waiting for model checking to complete after scenario end...")
-                        max_wait_time = 300
-                        wait_start = time.time()
-
-                        while self.waiting_for_model_check and (time.time() - wait_start) < max_wait_time:
-                            if self.is_model_check_complete():
-                                print(
-                                    "Loop: Model checking completed after scenario end")
-                                break
-                            time.sleep(2)
-
-                        if self.waiting_for_model_check:
-                            print("Loop: Model checking timeout after scenario end")
-                            with self.model_check_lock:
-                                self.waiting_for_model_check = False
-
-                    self.halt_all()
-                    time.sleep(2)
-
-                    if self.loop_mode and self.current_scenario:
-                        time.sleep(self.loop_delay)
-                        self.start_model_check_then_scenario(
-                            self.current_scenario,
-                            is_file=True,
-                            model_check_enabled=self.model_check_enabled,
-                            model_check_config=self.model_check_config
-                        )
-
+                    self._loop_restart("process ended")
                 elif not self.current_process:
-                    print(
-                        f"Loop: No process running, starting scenario: {self.current_scenario}")
+                    scenario = self.current_scenario
+                    print(f"Loop: No process running, starting scenario: {scenario}")
                     self.start_model_check_then_scenario(
-                        self.current_scenario,
-                        is_file=True,
+                        scenario,
                         model_check_enabled=self.model_check_enabled,
                         model_check_config=self.model_check_config
                     )
@@ -1376,6 +1458,15 @@ def goal_picker():
     return render_template('goal_picker.html')
 
 
+@app.route('/api/scenario/template')
+def get_scenario_template():
+    result = scenario_manager.get_scenario_content('simulation_scenarios/template.launch.py')
+    if not result['success']:
+        result['path_checked'] = os.path.join(scenario_manager.base_directory, 'simulation_scenarios', 'template.launch.py')
+        return jsonify(result), 404
+    return jsonify(result)
+
+
 @app.route('/api/status')
 def api_status():
     ws_status = workspace_monitor.get_status() if workspace_monitor else None
@@ -1413,24 +1504,22 @@ def start_scenario_route():
     scenario_input = data.get(
         'scenario', "simulation_scenarios/simulation_test.launch.py"
     )
-    is_file = data.get('is_file', True)
     model_check_enabled = data.get('model_check_enabled', False)
     if isinstance(model_check_enabled, str):
         model_check_enabled = model_check_enabled.lower() == 'true'
     model_check_config = data.get('model_check_config', 'config/default.yaml')
 
-    if not scenario_input:
+    if not scenario_input or not isinstance(scenario_input, str):
         return jsonify({"success": False, "message": "No scenario provided"}), 400
 
     if model_check_enabled:
         result = scenario_manager.start_model_check_then_scenario(
             scenario_input,
-            is_file,
             model_check_enabled,
             model_check_config,
         )
     else:
-        result = scenario_manager.start_scenario(scenario_input, is_file)
+        result = scenario_manager.start_scenario(scenario_input)
 
     return jsonify(result)
 
@@ -1478,19 +1567,6 @@ def get_scenarios():
 @app.route('/api/scenario/content/<path:scenario_path>')
 def get_scenario_content(scenario_path):
     result = scenario_manager.get_scenario_content(scenario_path)
-    return jsonify(result)
-
-
-@app.route('/api/scenario/save', methods=['POST'])
-def save_scenario():
-    data = request.json
-    scenario_name = data.get('name')
-    content = data.get('content')
-
-    if not scenario_name or not content:
-        return jsonify({"success": False, "message": "Name and content are required"}), 400
-
-    result = scenario_manager.save_scenario(scenario_name, content)
     return jsonify(result)
 
 
@@ -1571,8 +1647,8 @@ def set_positions():
 
     if 'start' in data:
         stored_positions['start'] = data['start']
-    if 'goal' in data:
-        stored_positions['goal'] = data['goal']
+    if 'goals' in data:
+        stored_positions['goals'] = data['goals']
 
     return jsonify({"success": True, "message": "Positions stored successfully"})
 
@@ -1585,7 +1661,7 @@ def get_positions():
 @app.route('/api/positions/clear', methods=['POST'])
 def clear_positions():
     global stored_positions
-    stored_positions = {'start': None, 'goal': None}
+    stored_positions = {'start': None, 'goals': []}
     return jsonify({"success": True, "message": "Positions cleared"})
 
 
@@ -1835,8 +1911,7 @@ def start_scenario_model_checked():
         if model_check_blueprint is None:
             # Just run scenario for the duration without model checking
             print("Model checker not available, running scenario only")
-            scenario_result = scenario_manager.start_scenario(
-                scenario, is_file=True)
+            scenario_result = scenario_manager.start_scenario(scenario)
             if not scenario_result["success"]:
                 return jsonify({
                     "success": False,
@@ -1868,7 +1943,6 @@ def start_scenario_model_checked():
         # Use the synchronized method
         result = scenario_manager.start_model_check_then_scenario(
             scenario,
-            is_file=True,
             model_check_enabled=True,
             model_check_config='config/default.yaml'
         )
@@ -2206,6 +2280,7 @@ def _mc_load_package_default_yaml():
 # ── ROS Workspace Build Management ──────────────────────────────────────────
 
 _workspace_build_procs: dict = {}
+_workspace_build_results: dict = {}  # target -> exit code, populated after process exits
 _workspace_build_broadcaster = _LogBroadcaster(maxlen=5000)
 
 
@@ -2242,6 +2317,7 @@ def ros_workspace_status():
         'build_dir_exists': os.path.isdir(build_dir),
         'install_dir_exists': os.path.isdir(install_dir),
         'running': running,
+        'exit_codes': dict(_workspace_build_results),
         'total_packages': total_pkgs,
         'built_packages': built_pkgs,
     })
@@ -2376,6 +2452,7 @@ def _run_workspace_make(target: str):
                         _colcon_unknown_packages.add(pkg_name)
                         unknown_warned = True
             rc = proc.wait()
+            _workspace_build_results[target] = rc
             _workspace_build_broadcaster.write(
                 f'=== {label} exited (rc={rc}) ===',
                 'stdout' if rc == 0 else 'stderr'
@@ -3104,6 +3181,10 @@ def main():
                         help='Directory for logs and bag recordings')
     parser.add_argument('--port', type=str,
                         help='TCP listining port. DEFAULT: 8888')
+    parser.add_argument('--host', type=str,
+                        help='Bind address. DEFAULT: 127.0.0.1. Binding to a '
+                             'non-loopback address exposes an interface that can '
+                             'execute arbitrary code.')
     parser.add_argument('--workspace-root', type=str,
                         help='Repository root containing ros2_workspace/. Defaults to two levels above this script.')
 
@@ -3111,6 +3192,7 @@ def main():
 
     LOG_DIRECTORY = args.log_directory or os.environ.get('LOG_DIRECTORY')
     PORT = args.port or 8888
+    HOST = args.host or os.environ.get('ADORE_API_HOST') or '127.0.0.1'
 
     workspace_root = (
         args.workspace_root
@@ -3170,10 +3252,19 @@ def main():
         print(f"✗ Failed to register ros2tools blueprint: {e}")
         print("✗ ros2tools functionality will not be available")
 
-    print(f"\n🚀 Starting ADORe API server on http://0.0.0.0:{PORT}")
+    print(f"\n🚀 Starting ADORe API server on http://{HOST}:{PORT}")
     print(f"📊 API status available at: http://localhost:{PORT}/api/status")
     print(f"🔧 Workspace status at: http://localhost:{PORT}/api/workspace/status")
-    app.run(debug=False, use_reloader=False, host='0.0.0.0', port=PORT)
+
+    if HOST not in ('127.0.0.1', 'localhost', '::1'):
+        print(f"⚠  Bound to {HOST}: this API can execute arbitrary code and has "
+              f"no transport security. Set ADORE_API_TOKEN and keep the network isolated.")
+    if API_TOKEN is None:
+        print("⚠  No ADORE_API_TOKEN set: every request to this API is anonymous.")
+    if ALLOWED_ORIGINS:
+        print(f"✓ Cross-origin requests allowed from: {', '.join(ALLOWED_ORIGINS)}")
+
+    app.run(debug=False, use_reloader=False, host=HOST, port=PORT)
 
 
 if __name__ == '__main__':
