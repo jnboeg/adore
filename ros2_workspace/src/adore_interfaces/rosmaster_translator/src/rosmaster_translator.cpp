@@ -36,7 +36,8 @@ namespace adore
                                       		[this](const adore_ros2_msgs::msg::VehicleCommand& msg) { latest_vehicle_command = dynamics::conversions::to_cpp_type(msg); });
 		subscriber_vel_raw = create_subscription<geometry_msgs::msg::Twist>("/vel_raw", qos, 
 									[this](const geometry_msgs::msg::Twist& msg) { latest_vel_raw = msg; });
-
+		subscriber_odom= create_subscription<nav_msgs::msg::Odometry>("/odom", qos, 
+									[this](const nav_msgs::msg::Odometry& msg) { latest_odom = msg; });
 	}
 
     /******************************* PUBLISHER RELATED FUNCTIONS ************************************************************/
@@ -67,15 +68,60 @@ namespace adore
 		this->last_vel_raw = vel_raw;
 		vel_raw = this->latest_vel_raw;
 
+		nav_msgs::msg::Odometry odom;
+		this->last_odom = odom;
+		odom = this-> latest_odom;
+		
+		get_tf_transform();
+
+		adore_ros2_msgs::msg::VehicleStateDynamic state;
+		state.x = x + offset_x;
+		state.y = y + offset_y;
+		state.z = 0.0;
+		//state.vx = vel_raw.linear.x;
+		state.vx = odom.twist.twist.linear.x;
+		state.vy = 0.0;
+		state.yaw_angle = yaw;
+		state.yaw_rate = deriviate_yaw_rate(yaw, last_vehicle_state_dynamic.yaw_rate);
+		//state.steering_angle = euler_integrate_steering_rate(vel_raw.angular.z);
+		state.steering_angle = euler_integrate_steering_rate(odom.twist.twist.angular.z);
+		//state.steering_rate = vel_raw.angular.z;
+		state.steering_rate = odom.twist.twist.angular.z;
+		//state.ax = deriviate_velocity(vel_raw.linear.x, last_vel_raw.linear.x);
+		state.ax = deriviate_velocity(odom.twist.twist.linear.x, last_odom.twist.twist.linear.x);
+		state.ay = 0.0;
+		state.time = current_time.seconds();
+		state.header.stamp = current_time;
+		state.header.frame_id = "world";
+		last_vehicle_state_dynamic = state;
+
+		RCLCPP_INFO(this->get_logger(), "Acceleration: '%f', Steering angle: '%f'", vehicle_command.acceleration, vehicle_command.steering_angle);
+  		RCLCPP_INFO(this->get_logger(), "Velocity: '%f', Steering rate: '%f'", message.linear.x, message.angular.z);
+  		publisher_cmd_vel->publish(message);
+		RCLCPP_INFO(this->get_logger(), "X: %f, Y: %f, yaw: %f", state.x, state.y, state.yaw_angle);
+		publisher_vehicle_state_dynamic->publish(state);
+    }
+
+	void RosmasterTranslator::load_parameters()
+	{
+		start_position_x = declare_parameter<double>( "set_start_utm_position_x", 0.0 );
+  		start_position_y = declare_parameter<double>( "set_start_utm_position_y", 0.0 );
+	
+		utm_zone = declare_parameter<int>( "set_start_utm_zone_number", 32 );
+  		utm_letter = declare_parameter<std::string>( "set_start_utm_zone_letter", "U" );
+	}
+
+	void RosmasterTranslator::get_tf_transform() 
+	{
 		if (tf_buffer->canTransform(
         "map",
-        "base_link",
+        "base_footprint",
         tf2::TimePointZero,
         tf2::durationFromSec(0.1))) {
 
 			auto transform = tf_buffer->lookupTransform(
 				"map",
-				"base_link",
+				"base_footprint",
 				tf2::TimePointZero
 			);
 
@@ -94,40 +140,6 @@ namespace adore
 			
 			tf2::Matrix3x3(quaternion).getRPY(roll, pitch, yaw);
 		}
-		
-		
-
-		adore_ros2_msgs::msg::VehicleStateDynamic state;
-		state.x = x + offset_x;
-		state.y = y + offset_y;
-		state.z = 0.0;
-		state.vx = vel_raw.linear.x;
-		state.vy = 0.0;
-		state.yaw_angle = yaw;
-		state.yaw_rate = deriviate_yaw_rate(yaw, last_vehicle_state_dynamic.yaw_rate);
-		state.steering_angle = euler_integrate_steering_rate(vel_raw.angular.z);
-		state.steering_rate = vel_raw.angular.z;
-		state.ax = deriviate_velocity(vel_raw.linear.x, last_vel_raw.linear.x);
-		state.ay = 0.0;
-		state.time = current_time.seconds();
-		state.header.stamp = current_time;
-		state.header.frame_id = "UTM32U";
-		last_vehicle_state_dynamic = state;
-
-		RCLCPP_INFO(this->get_logger(), "Acceleration: '%f', Steering angle: '%f'", vehicle_command.acceleration, vehicle_command.steering_angle);
-  		RCLCPP_INFO(this->get_logger(), "Velocity: '%f', Steering rate: '%f'", message.linear.x, message.angular.z);
-  		publisher_cmd_vel->publish(message);
-		RCLCPP_INFO(this->get_logger(), "X: %f, Y: %f, yaw: %f", state.x, state.y, state.yaw_angle);
-		publisher_vehicle_state_dynamic->publish(state);
-    }
-
-	void RosmasterTranslator::load_parameters()
-	{
-		start_position_x = declare_parameter<double>( "set_start_utm_position_x", 0.0 );
-  		start_position_y = declare_parameter<double>( "set_start_utm_position_y", 0.0 );
-	
-		utm_zone = declare_parameter<int>( "set_start_utm_zone_number", 32 );
-  		utm_letter = declare_parameter<std::string>( "set_start_utm_zone_letter", "U" );
 	}
 
 	void RosmasterTranslator::calculate_offset() {

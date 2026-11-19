@@ -45,12 +45,15 @@ namespace adore
         /******************************* SUBSCRIBERS RELATED MEMBERS ************************************************************/
         rclcpp::Subscription<adore_ros2_msgs::msg::VehicleCommand>::SharedPtr   subscriber_vehicle_command;
         rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr              subscriber_vel_raw;
+        rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr              subscriber_odom;
 
         /******************************* OTHER MEMBERS *************************************************************************/
         std::optional<dynamics::VehicleCommand> latest_vehicle_command = std::nullopt;
         adore_ros2_msgs::msg::VehicleStateDynamic last_vehicle_state_dynamic;
         geometry_msgs::msg::Twist latest_vel_raw;
         geometry_msgs::msg::Twist last_vel_raw;
+        nav_msgs::msg::Odometry latest_odom;
+        nav_msgs::msg::Odometry last_odom;
         geometry_msgs::msg::TransformStamped latest_tf;
         geometry_msgs::msg::TransformStamped initial_tf;
 
@@ -89,6 +92,8 @@ namespace adore
         void calculate_offset();
 
         void load_parameters();
+
+        void get_tf_transform();
 
         double euler_integrate_acceleration( const double& acceleration );
         double deriviate_steering_angle( const double& steering_angle);
