@@ -89,10 +89,9 @@ namespace adore
 
         void timer_callback();
 
-        void calculate_offset();
-
         void load_parameters();
 
+        void calculate_offset(const double& x, const double& y);
         void get_tf_transform();
         void calculate_yaw(geometry_msgs::msg::Quaternion quarternion);
 

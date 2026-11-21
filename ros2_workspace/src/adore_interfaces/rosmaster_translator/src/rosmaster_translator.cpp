@@ -73,6 +73,10 @@ namespace adore
 		odom = this-> latest_odom;
 		
 		//get_tf_transform();
+		calculate_offset(odom.pose.pose.position.x, odom.pose.pose.position.y);
+		x = odom.pose.pose.position.x;
+		y = odom.pose.pose.position.y;
+
 		calculate_yaw(odom.pose.pose.orientation);
 
 		adore_ros2_msgs::msg::VehicleStateDynamic state;
@@ -126,13 +130,7 @@ namespace adore
 				tf2::TimePointZero
 			);
 
-
-				if(!initial_position_set) {
-					initial_position_x = transform.transform.translation.x;
-					initial_position_y = transform.transform.translation.y;
-					calculate_offset();
-					initial_position_set = true;
-				}
+			calculate_offset(transform.transform.translation.x, transform.transform.translation.y);
 
 			x = transform.transform.translation.x;
 			y = transform.transform.translation.y;
@@ -144,9 +142,20 @@ namespace adore
 		}
 	}
 
-	void RosmasterTranslator::calculate_offset() {
-		offset_x = start_position_x - initial_position_x;
-		offset_y = start_position_y - initial_position_y;
+
+
+	void RosmasterTranslator::calculate_offset(const double& x, const double& y) {
+		if(!initial_position_set) {
+			initial_position_x = x;
+			initial_position_y = y;
+			
+			offset_x = start_position_x - initial_position_x;
+			offset_y = start_position_y - initial_position_y;
+
+			initial_position_set = true;
+		}
+
+		
 	}
 
 	void RosmasterTranslator::calculate_yaw(geometry_msgs::msg::Quaternion orientation) {
