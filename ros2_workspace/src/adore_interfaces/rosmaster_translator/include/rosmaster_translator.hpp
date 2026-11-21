@@ -94,6 +94,7 @@ namespace adore
         void load_parameters();
 
         void get_tf_transform();
+        void calculate_yaw(geometry_msgs::msg::Quaternion quarternion);
 
         double euler_integrate_acceleration( const double& acceleration );
         double deriviate_steering_angle( const double& steering_angle);

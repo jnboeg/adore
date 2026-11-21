@@ -72,7 +72,8 @@ namespace adore
 		this->last_odom = odom;
 		odom = this-> latest_odom;
 		
-		get_tf_transform();
+		//get_tf_transform();
+		calculate_yaw(odom.pose.pose.orientation);
 
 		adore_ros2_msgs::msg::VehicleStateDynamic state;
 		state.x = x + offset_x;
@@ -136,15 +137,21 @@ namespace adore
 			x = transform.transform.translation.x;
 			y = transform.transform.translation.y;
 
-			tf2::Quaternion quaternion(transform.transform.rotation.x, transform.transform.rotation.y, transform.transform.rotation.z, transform.transform.rotation.w);
-			
-			tf2::Matrix3x3(quaternion).getRPY(roll, pitch, yaw);
+			//tf2::Quaternion quaternion(transform.transform.rotation.x, transform.transform.rotation.y, transform.transform.rotation.z, transform.transform.rotation.w);
+			//tf2::Matrix3x3(quaternion).getRPY(roll, pitch, yaw);
+
+			calculate_yaw(transform.transform.rotation);
 		}
 	}
 
 	void RosmasterTranslator::calculate_offset() {
 		offset_x = start_position_x - initial_position_x;
 		offset_y = start_position_y - initial_position_y;
+	}
+
+	void RosmasterTranslator::calculate_yaw(geometry_msgs::msg::Quaternion orientation) {
+		tf2::Quaternion quaternion(orientation.x, orientation.y, orientation.z, orientation.w);	
+		tf2::Matrix3x3(quaternion).getRPY(roll, pitch, yaw);
 	}
 
     double RosmasterTranslator::euler_integrate_acceleration( const double& acceleration )
