@@ -4,6 +4,8 @@
 #include <functional>
 #include <memory>
 #include <string>
+#include <numbers>
+#include <cmath>
 
 #include "adore_dynamics_adapters.hpp"
 #include "adore_dynamics_conversions.hpp"
@@ -22,8 +24,8 @@
 using namespace std::chrono_literals;
 
 const static float VEHICLE_COMMAND_DELTA_TIME_SECONDS = 0.05; // The main timer callback of trajectory tracker
-
-const static float ADORE_ROSMASTER_SCALE = 13.79;
+const static float VEHICLE_WHEELBASE = 0.19;
+//const static float ADORE_ROSMASTER_SCALE = 13.79;
 
 namespace adore
 {
@@ -69,6 +71,7 @@ namespace adore
 
         double start_position_x = 0;
         double start_position_y = 0;
+        //double start_position_yaw = 0;
 
         int utm_zone;
         std::string utm_letter;
@@ -95,8 +98,10 @@ namespace adore
         void get_tf_transform();
         void calculate_yaw(geometry_msgs::msg::Quaternion quarternion);
 
+        double calculate_yaw_rate(const double& velocity, const double& steering_angle);
+
         double euler_integrate_acceleration( const double& acceleration );
-        double deriviate_steering_angle( const double& steering_angle);
+        double deriviate_steering_angle( const double& steering_angle_latest, const double& steering_angle_last);
 
         double deriviate_yaw_rate(const double& yaw_latest, const double& yaw_last);
         double deriviate_velocity(const double& velocity_latest, const double& velocity_last);

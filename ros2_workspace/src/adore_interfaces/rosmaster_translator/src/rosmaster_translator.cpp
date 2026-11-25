@@ -48,21 +48,25 @@ namespace adore
 		current_time     = now();
   		last_update_time = current_time;
 
-    	if (!this->latest_vehicle_command.has_value())
+    	if (this->latest_vehicle_command.has_value())
     	{
-    		return;
-    	}
+    		dynamics::VehicleCommand vehicle_command = this->latest_vehicle_command.value();
 
-    	dynamics::VehicleCommand vehicle_command = this->latest_vehicle_command.value();
+			geometry_msgs::msg::Twist message;
+			//message = "{linear: {x: 0.1, y: 0.0, z: 0.0}, angular: {x: 0.0, y: 0.0, z: 0.0}}";
+			message.linear.x = euler_integrate_acceleration(vehicle_command.acceleration);
+			message.linear.y = 0.0;
+			message.linear.z = 0.0;
+			message.angular.x = 0.0;
+			message.angular.y = 0.0;
+			//message.angular.z = deriviate_steering_angle(vehicle_command.steering_angle);
+			message.angular.z = calculate_yaw_rate(euler_integrate_acceleration(vehicle_command.acceleration), vehicle_command.steering_angle);
 
-  		geometry_msgs::msg::Twist message;
-  		//message = "{linear: {x: 0.1, y: 0.0, z: 0.0}, angular: {x: 0.0, y: 0.0, z: 0.0}}";
-		message.linear.x = euler_integrate_acceleration(vehicle_command.acceleration);
-  		message.linear.y = 0.0;
-  		message.linear.z = 0.0;
-  		message.angular.x = 0.0;
-  		message.angular.y = 0.0;
-		message.angular.z = deriviate_steering_angle(vehicle_command.steering_angle);
+			RCLCPP_INFO(this->get_logger(), "Acceleration: '%f', Steering angle: '%f'", vehicle_command.acceleration, vehicle_command.steering_angle);
+  			RCLCPP_INFO(this->get_logger(), "Velocity: '%f', Steering rate: '%f'", message.linear.x, message.angular.z);
+  			publisher_cmd_vel->publish(message);
+		}
+    	
 
 		geometry_msgs::msg::Twist vel_raw;
 		this->last_vel_raw = vel_raw;
@@ -83,26 +87,26 @@ namespace adore
 		state.x = x + offset_x;
 		state.y = y + offset_y;
 		state.z = 0.0;
-		//state.vx = vel_raw.linear.x;
-		state.vx = odom.twist.twist.linear.x;
+		state.vx = vel_raw.linear.x;
+		//state.vx = odom.twist.twist.linear.x;
 		state.vy = 0.0;
 		state.yaw_angle = yaw;
-		state.yaw_rate = deriviate_yaw_rate(yaw, last_vehicle_state_dynamic.yaw_rate);
+		//state.yaw_rate = deriviate_yaw_rate(yaw, last_vehicle_state_dynamic.yaw_rate);
+		state.yaw_rate = vel_raw.angular.z;
+		//state.yaw_rate = odom.twist.twist.angular.z;
 		//state.steering_angle = euler_integrate_steering_rate(vel_raw.angular.z);
-		state.steering_angle = euler_integrate_steering_rate(odom.twist.twist.angular.z);
+		//state.steering_angle = euler_integrate_steering_rate(odom.twist.twist.angular.z);
+		state.steering_angle = vel_raw.linear.y * (std::numbers::pi / 180);
 		//state.steering_rate = vel_raw.angular.z;
-		state.steering_rate = odom.twist.twist.angular.z;
-		//state.ax = deriviate_velocity(vel_raw.linear.x, last_vel_raw.linear.x);
-		state.ax = deriviate_velocity(odom.twist.twist.linear.x, last_odom.twist.twist.linear.x);
+		state.steering_rate = deriviate_steering_angle(vel_raw.linear.y * (std::numbers::pi / 180),  last_vel_raw.linear.y * (std::numbers::pi / 180));
+		state.ax = deriviate_velocity(vel_raw.linear.x, last_vel_raw.linear.x);
+		//state.ax = deriviate_velocity(odom.twist.twist.linear.x, last_odom.twist.twist.linear.x);
 		state.ay = 0.0;
 		state.time = current_time.seconds();
 		state.header.stamp = current_time;
 		state.header.frame_id = "world";
 		last_vehicle_state_dynamic = state;
 
-		RCLCPP_INFO(this->get_logger(), "Acceleration: '%f', Steering angle: '%f'", vehicle_command.acceleration, vehicle_command.steering_angle);
-  		RCLCPP_INFO(this->get_logger(), "Velocity: '%f', Steering rate: '%f'", message.linear.x, message.angular.z);
-  		publisher_cmd_vel->publish(message);
 		RCLCPP_INFO(this->get_logger(), "X: %f, Y: %f, yaw: %f", state.x, state.y, state.yaw_angle);
 		publisher_vehicle_state_dynamic->publish(state);
     }
@@ -111,6 +115,7 @@ namespace adore
 	{
 		start_position_x = declare_parameter<double>( "set_start_utm_position_x", 0.0 );
   		start_position_y = declare_parameter<double>( "set_start_utm_position_y", 0.0 );
+		//start_position_yaw = declare_parameter<double>( "set_start_position_yaw", 0.0 );
 	
 		utm_zone = declare_parameter<int>( "set_start_utm_zone_number", 32 );
   		utm_letter = declare_parameter<std::string>( "set_start_utm_zone_letter", "U" );
@@ -135,16 +140,14 @@ namespace adore
 			x = transform.transform.translation.x;
 			y = transform.transform.translation.y;
 
-			//tf2::Quaternion quaternion(transform.transform.rotation.x, transform.transform.rotation.y, transform.transform.rotation.z, transform.transform.rotation.w);
-			//tf2::Matrix3x3(quaternion).getRPY(roll, pitch, yaw);
-
 			calculate_yaw(transform.transform.rotation);
 		}
 	}
 
 
 
-	void RosmasterTranslator::calculate_offset(const double& x, const double& y) {
+	void RosmasterTranslator::calculate_offset(const double& x, const double& y) 
+	{
 		if(!initial_position_set) {
 			initial_position_x = x;
 			initial_position_y = y;
@@ -154,47 +157,63 @@ namespace adore
 
 			initial_position_set = true;
 		}
-
-		
 	}
 
 	void RosmasterTranslator::calculate_yaw(geometry_msgs::msg::Quaternion orientation) {
 		tf2::Quaternion quaternion(orientation.x, orientation.y, orientation.z, orientation.w);	
 		tf2::Matrix3x3(quaternion).getRPY(roll, pitch, yaw);
+
+		double temp = yaw;
+		temp +=  std::numbers::pi / 2.0;
+		//temp += start_position_yaw;
+		if (temp > std::numbers::pi)
+		{
+			temp -=  std::numbers::pi * 1.5;
+		} 
+
+		yaw = temp;
+		
+	}
+
+	double RosmasterTranslator::calculate_yaw_rate(const double& velocity, const double& steering_angle)
+	{
+		return (velocity * std::tan(steering_angle)) / VEHICLE_WHEELBASE;
 	}
 
     double RosmasterTranslator::euler_integrate_acceleration( const double& acceleration )
     {
       velocity += acceleration * VEHICLE_COMMAND_DELTA_TIME_SECONDS; 
 
-      if ( velocity < 0.0 )
-      {
+      if (velocity < 0.0) {
         velocity = 0.0;
       }
       
       return velocity;
     }
 
-	double RosmasterTranslator::deriviate_steering_angle( const double& steering_angle)
+	double RosmasterTranslator::deriviate_steering_angle(const double& steering_angle_latest, const double& steering_angle_last)
 	{
-		steering_rate = steering_angle / VEHICLE_COMMAND_DELTA_TIME_SECONDS;
+		steering_rate = (steering_angle_latest - steering_angle_last) / VEHICLE_COMMAND_DELTA_TIME_SECONDS;
 
 		return steering_rate;
 	}
 
-	double RosmasterTranslator::deriviate_yaw_rate(const double& yaw_latest, const double& yaw_last) {
+	double RosmasterTranslator::deriviate_yaw_rate(const double& yaw_latest, const double& yaw_last) 
+	{
 		yaw_rate = (yaw_latest - yaw_last) / VEHICLE_COMMAND_DELTA_TIME_SECONDS;
 
 		return yaw_rate;
 	}
 
-	double RosmasterTranslator::deriviate_velocity( const double& velocity_latest, const double& velocity_last) {
+	double RosmasterTranslator::deriviate_velocity( const double& velocity_latest, const double& velocity_last) 
+	{
 		acceleration = (velocity_latest - velocity_last) / VEHICLE_COMMAND_DELTA_TIME_SECONDS;
 
 		return acceleration;
 	}
 
-	double RosmasterTranslator::euler_integrate_steering_rate(const double& steering_rate) {
+	double RosmasterTranslator::euler_integrate_steering_rate(const double& steering_rate) 
+	{
 		steering_angle += steering_rate * VEHICLE_COMMAND_DELTA_TIME_SECONDS;
 
 		return steering_angle;
